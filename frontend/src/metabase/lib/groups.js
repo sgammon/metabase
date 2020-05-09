@@ -18,6 +18,10 @@ export function isMetaBotGroup(group) {
   return group.name === "MetaBot";
 }
 
+export function isSpecialGroup(group) {
+  return isDefaultGroup(group) || isAdminGroup(group) || isMetaBotGroup(group);
+}
+
 export function canEditPermissions(group) {
   return !isAdminGroup(group);
 }
@@ -29,7 +33,9 @@ export function canEditMembership(group) {
 export function getGroupColor(group) {
   return isAdminGroup(group)
     ? "text-purple"
-    : isDefaultGroup(group) ? "text-medium" : "text-brand";
+    : isDefaultGroup(group)
+    ? "text-medium"
+    : "text-brand";
 }
 
 export function getGroupNameLocalized(group) {

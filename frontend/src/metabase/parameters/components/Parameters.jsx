@@ -1,10 +1,13 @@
 /* @flow */
 
 import React, { Component } from "react";
+import { connect } from "react-redux";
 
-import StaticParameterWidget from "./ParameterWidget.jsx";
+import StaticParameterWidget from "./ParameterWidget";
 import Icon from "metabase/components/Icon";
-import colors from "metabase/lib/colors";
+import { color } from "metabase/lib/colors";
+
+import { getMetadata } from "metabase/selectors/metadata";
 
 import querystring from "querystring";
 import cx from "classnames";
@@ -14,7 +17,12 @@ import type {
   ParameterId,
   Parameter,
   ParameterValues,
+  ParameterValueOrArray,
 } from "metabase/meta/types/Parameter";
+
+import type { DashboardWithCards } from "metabase/meta/types/Dashboard";
+import type Field from "metabase-lib/lib/metadata/Field";
+import type Metadata from "metabase-lib/lib/metadata/Metadata";
 
 type Props = {
   className?: string,
@@ -26,11 +34,12 @@ type Props = {
   isFullscreen?: boolean,
   isNightMode?: boolean,
   hideParameters?: ?string, // comma separated list of slugs
-  isEditing?: boolean,
+  isEditing?: false | DashboardWithCards,
   isQB?: boolean,
   vertical?: boolean,
   commitImmediately?: boolean,
 
+  metadata?: Metadata,
   query?: QueryParams,
 
   setParameterName?: (parameterId: ParameterId, name: string) => void,
@@ -44,6 +53,7 @@ type Props = {
   setEditingParameter?: (parameterId: ParameterId) => void,
 };
 
+@connect(state => ({ metadata: getMetadata(state) }))
 export default class Parameters extends Component {
   props: Props;
 
@@ -55,13 +65,27 @@ export default class Parameters extends Component {
 
   componentWillMount() {
     // sync parameters from URL query string
-    const { parameters, setParameterValue, query } = this.props;
+    const { parameters, setParameterValue, query, metadata } = this.props;
     if (setParameterValue) {
       for (const parameter of parameters) {
-        if (query && query[parameter.slug] != null) {
-          setParameterValue(parameter.id, query[parameter.slug]);
-        } else if (parameter.default != null) {
-          setParameterValue(parameter.id, parameter.default);
+        const queryParam = query && query[parameter.slug];
+        if (queryParam != null || parameter.default != null) {
+          let value = queryParam != null ? queryParam : parameter.default;
+
+          // ParameterValueWidget uses FieldValuesWidget if there's no available
+          // date widget and all targets are fields. This matches that logic.
+          const willUseFieldValuesWidget =
+            parameter.hasOnlyFieldTargets && !/^date\//.test(parameter.type);
+          if (willUseFieldValuesWidget && value && !Array.isArray(value)) {
+            // FieldValuesWidget always produces an array. If we'll use that
+            // widget, we should start with an array to match.
+            value = [value];
+          }
+          const fieldIds = parameter.field_ids || [];
+          // $FlowFixMe
+          const fields = fieldIds.map(id => metadata.field(id));
+          // $FlowFixMe
+          setParameterValue(parameter.id, parseQueryParam(value, fields));
         }
       }
     }
@@ -175,6 +199,7 @@ export default class Parameters extends Component {
               parameters={parameters}
               editingParameter={editingParameter}
               setEditingParameter={setEditingParameter}
+              index={index}
               setName={
                 setParameterName &&
                 (name => setParameterName(parameter.id, name))
@@ -214,7 +239,7 @@ const SortableParameterHandle = SortableHandle(() => (
   <div
     className="absolute top bottom left flex layout-centered hover-child cursor-grab"
     style={{
-      color: colors["border"],
+      color: color("border"),
       // width should match the left padding of the ParameterWidget container class so that it's centered
       width: "1em",
       marginLeft: "1px",
@@ -228,3 +253,22 @@ const SortableParameterWidget = SortableElement(StaticParameterWidget);
 const SortableParameterWidgetList = SortableContainer(
   StaticParameterWidgetList,
 );
+
+export function parseQueryParam(
+  value: ParameterValueOrArray,
+  fields: Field[],
+): any {
+  if (Array.isArray(value)) {
+    return value.map(v => parseQueryParam(v, fields));
+  }
+  // [].every is always true, so only check if there are some fields
+  if (fields.length > 0) {
+    if (fields.every(f => f.isNumeric())) {
+      return parseFloat(value);
+    }
+    if (fields.every(f => f.isBoolean())) {
+      return value === "true" ? true : value === "false" ? false : value;
+    }
+  }
+  return value;
+}
